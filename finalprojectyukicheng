@@ -1,0 +1,195 @@
+"""
+Class: CS230--Section 1
+Name: Yuki Cheng
+Description: (Final Project)
+I pledge that I have completed the programming assignment independently.
+I have not copied the code from a student or any source.
+I have not given my code to any student.
+"""
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import pydeck as pdk
+import re
+import math
+from PIL import Image
+import warnings
+warnings.filterwarnings('ignore')
+
+
+# read in data and delete empty columns
+def read_data():
+    airbnb = pd.read_csv("LondonAirBnBSep2021.csv").set_index("id")
+    # remove special characters in name
+    airbnb['name'] = airbnb['name'].str.replace(r'\W', '')
+    #all longitude, latitude are float numbers
+    airbnb['longitude'] = airbnb['longitude'].apply(lambda x: x if isinstance(x, float) else np.nan)
+    airbnb['latitude'] = airbnb['latitude'].apply(lambda x: x if isinstance(x, float) else np.nan)
+    airbnb.dropna(subset=['name', 'longitude', 'latitude'], inplace=True)
+    return airbnb
+
+
+# filter data
+def filter_data(df, selected_neighbourhoods, max_price, min_availability):
+    airbnb = df[df['neighbourhood'].isin(selected_neighbourhoods)]
+    airbnb = airbnb[airbnb['price'] < max_price]
+    airbnb = airbnb[airbnb['availability_365'] > min_availability]
+    return airbnb
+
+
+def all_neighbourhoods(df):
+    return list(df['neighbourhood'].unique())
+
+
+def room_type(df):
+    return list(df['room_type'].unique())
+
+
+def host_list(df):
+    #Sort hosts from the one has the highest amount of listing to the lowest amount of listings
+    new_df = df.groupby('host_name').agg({
+        'name': 'count'
+    }).reset_index().sort_values(by='name', ascending=False)
+    new_df['text'] = new_df['host_name'] + ' (' + new_df['name'].map(str) + ')'
+    return new_df['text']
+
+
+def neighbourhood_prices(df):
+    res= {}
+    for index, row in df.iterrows():
+        neighbourhood = row['neighbourhood']
+        price = row['price']
+        if neighbourhood not in res:
+            res[neighbourhood] = [price]
+        else:
+            res[neighbourhood].append(price)
+    return res
+
+
+def neighbourhood_average(dict_prices):
+    res = {}
+    for key in dict_prices.keys():
+        res[key] = np.mean(dict_prices[key])
+    return res
+
+
+# pie chart
+def generate_pie_chart(df, selected_neighbourhoods):
+    counts = df['neighbourhood'].value_counts().to_dict()
+    #delete the ones that have less than 3% in market share
+    del counts['Newham'] , counts['Ealing'],counts['Barnet'],counts['Greenwich'], counts['Waltham Forest'], counts['Merton'], counts['Croydon'], counts[
+        'Richmond upon Thames'], counts['Hounslow'], counts['Redbridge'], counts['Enfield'], counts['Hillingdon'], \
+    counts['Bromley'], counts['Kingston upon Thames'], counts['Harrow'], counts['Barking and Dagenham'], counts[
+        'City of London'], counts['Sutton'], counts['Bexley'], counts['Havering']
+    labels = list(counts.keys())  # neighbourhood name
+    # print(labels)
+    sizes = list(counts.values())  # size
+    # print(sizes)
+    explode = []
+    for i in labels:
+        if i in selected_neighbourhoods:
+            explode.append(0.1)
+        else:
+            explode.append(0)
+    # print(explode)
+    fig, ax = plt.subplots()
+    ax.pie(sizes, explode=explode, labels=labels, autopct='%1.1f%%',
+            shadow=True, startangle=90)
+    ax.title.set_text("Market Share for selected neighbourhoods: {}".format(', '.join(selected_neighbourhoods)))
+    st.pyplot(fig)
+
+
+# bar chart
+def generate_bar_chart(dict_averages):
+    plt.figure()
+    x = dict_averages.keys()
+    y = dict_averages.values()
+    plt.bar(x, y)
+    plt.xticks(rotation=45)
+    plt.ylabel("Price")
+    plt.xlabel("Neighbourhoods")
+    plt.title(f"Average listing price for neighbourhoods: {','.join(dict_averages.keys())}")
+    return plt
+
+
+def generate_map(df):
+    # Define a layer to display on a map
+    new_df = df[['name', 'longitude', 'latitude']]
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        new_df,
+        pickable=True,
+        opacity=0.8,
+        stroked=True,
+        filled=True,
+        radius_scale=6,
+        radius_min_pixels=1,
+        radius_max_pixels=100,
+        line_width_min_pixels=1,
+        get_position=["longitude", "latitude"],
+        get_radius=5,
+        get_fill_color=[255, 140, 0],
+        get_line_color=[0, 0, 0],
+    )
+    # Set the viewport location
+    view_state = pdk.ViewState(
+        latitude=new_df.latitude.mean(),
+        longitude=new_df.longitude.mean(),
+        zoom=12,
+        bearing=0,
+        pitch=0
+    )
+    # Render
+    r = pdk.Deck(
+        layers=[layer],
+        initial_view_state=view_state,
+        tooltip={"text": "{name}"}
+    )
+    st.pydeck_chart(r)
+
+
+def main():
+    image = Image.open('airbnb.jpg')
+    st.image(image)
+
+    airbnb = read_data()
+    style1='<p style="font-family:Verdana; color:Gray; font-size: 20px;">Welcome to the London AirBnb data! ' \
+           'Please open the sidebar to begin!</p>'
+    st.title("Data Visualization with Python")
+    st.write(style1, unsafe_allow_html=True)
+
+    st.sidebar.write("Please choose your options to display data.")
+    neighbourhoods = st.sidebar.multiselect("Select a neighbourhood: ", all_neighbourhoods(airbnb))
+    room_type_select = st.sidebar.multiselect("Select a room type: ", room_type(airbnb))
+    max_price = st.sidebar.slider("Max Price: ", int(airbnb.price.min()), int(airbnb.price.max()))
+    min_availability = st.sidebar.slider("Min availability: ", 0, 365)
+    host = st.sidebar.multiselect("Select a host: ", host_list(airbnb))
+
+    data = filter_data(airbnb, neighbourhoods, max_price, min_availability)
+
+    if len(neighbourhoods) > 0 and max_price > 0 and min_availability > 0:
+        st.write('View a map of listings')
+        generate_map(data)
+        st.write('View a Pie Chart')
+        st.markdown("<p style='font-family:Verdana; color:Gray; font-size: 14px;'>"
+                    "NOTE: Neighbourhoods that have less than 3% marketshare have been filtered out due to the aesthetics of this page</p>"
+                    , unsafe_allow_html=True)
+        generate_pie_chart(airbnb, neighbourhoods)
+        st.write('View a Bar Chart')
+        st.pyplot(generate_bar_chart(neighbourhood_average(neighbourhood_prices(data))))
+
+        st.write('Average price by room type')
+        avg_price = airbnb.groupby('room_type').agg({
+            'price': 'mean'
+        })
+        st.table(avg_price)
+
+        real_host_name = [i.split(' (')[0] for i in host]
+        st.write('All listings the host {} has:'.format(real_host_name))
+        columns = ['name', 'price', 'room_type', 'minimum_nights', 'number_of_reviews', 'availability_365']
+        listing_df = airbnb[airbnb['host_name'].isin(real_host_name)][columns]
+        st.table(listing_df)
+
+
+main()
